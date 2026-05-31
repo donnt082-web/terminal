@@ -10,12 +10,12 @@ echo   ║     智能终端管理系统 - 启动中...        ║
 echo   ╚════════════════════════════════════════╝
 echo.
 
-:: ── 切换到项目目录 ──
-cd /d "D:\360MoveData\Users\86139\Desktop\terminal-system"
+:: ── 切换到项目目录（脚本所在目录，避免硬编码路径）──
+cd /d "%~dp0"
 
-:: ── 启动 WebSocket 服务器（独立窗口） ──
+:: ── 启动 WebSocket 服务器（独立窗口）──
 echo   📡 启动 WebSocket 服务器 ...
-start "WSServer" /MIN server\node index.js 3000
+start "WSServer" /MIN cmd /c "cd /d "%~dp0server" && node index.js 3000"
 
 :: ── 等待服务器就绪 ──
 echo   ⏳ 等待服务器就绪 ...
