@@ -251,6 +251,48 @@
       </div>
     </section>
 
+    <!-- ─── Control Section ─── -->
+    <section class="control-section" id="controlSection">
+      <div class="control-header">
+        <h3>设备控制</h3>
+        <span class="control-hint" id="controlHint">未连接</span>
+      </div>
+      <div class="control-grid">
+
+        <div class="control-card" data-device="led">
+          <div class="control-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+              <path d="M9 21h6M10 17h4M7 11a5 5 0 1110 0c0 2-1 3-2 4H9c-1-1-2-2-2-4z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div class="control-info">
+            <span class="control-label">LED 灯</span>
+            <span class="control-state" id="state_led">已关闭</span>
+          </div>
+          <button type="button" class="ctrl-switch" data-target="led" role="switch" aria-checked="false" aria-label="切换 LED 灯" title="切换 LED 灯">
+            <span class="switch-track"><span class="switch-thumb"></span></span>
+          </button>
+        </div>
+
+        <div class="control-card" data-device="fan">
+          <div class="control-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+              <path d="M12 12V3a4 4 0 014 4c0 2-2 3-4 5zM12 12h9a4 4 0 01-4 4c-2 0-3-2-5-4zM12 12v9a4 4 0 01-4-4c0-2 2-3 4-5zM12 12H3a4 4 0 014-4c2 0 3 2 5 4z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+              <circle cx="12" cy="12" r="1.5" fill="currentColor"/>
+            </svg>
+          </div>
+          <div class="control-info">
+            <span class="control-label">风扇</span>
+            <span class="control-state" id="state_fan">已关闭</span>
+          </div>
+          <button type="button" class="ctrl-switch" data-target="fan" role="switch" aria-checked="false" aria-label="切换风扇" title="切换风扇">
+            <span class="switch-track"><span class="switch-thumb"></span></span>
+          </button>
+        </div>
+
+      </div>
+    </section>
+
     <!-- ─── History Section ─── -->
     <section class="history-section" id="historySection">
       <div class="history-header">
@@ -268,6 +310,20 @@
             <option value="50" selected>最近 50 条</option>
             <option value="100">最近 100 条</option>
           </select>
+        </div>
+      </div>
+      <!-- 折线图：历史趋势（多指标合并）-->
+      <div class="history-chart-wrap">
+        <div class="chart-legend" id="chartLegend">
+          <button type="button" class="chart-legend-item active" data-metric="spO2" data-color="--color-spo2"><span class="legend-dot"></span>血氧</button>
+          <button type="button" class="chart-legend-item active" data-metric="heart_rate" data-color="--color-heart"><span class="legend-dot"></span>心率</button>
+          <button type="button" class="chart-legend-item active" data-metric="density" data-color="--color-gas"><span class="legend-dot"></span>浓度</button>
+          <button type="button" class="chart-legend-item active" data-metric="temperature" data-color="--color-temp"><span class="legend-dot"></span>温度</button>
+          <button type="button" class="chart-legend-item active" data-metric="humidity" data-color="--color-humi"><span class="legend-dot"></span>湿度</button>
+        </div>
+        <div class="chart-canvas-wrap">
+          <svg id="historyChart" class="history-chart" preserveAspectRatio="none"></svg>
+          <div class="chart-empty" id="chartEmpty">暂无数据</div>
         </div>
       </div>
       <div class="history-body">

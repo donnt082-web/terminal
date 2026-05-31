@@ -66,6 +66,22 @@ function insert(data) {
 }
 
 /**
+ * 按 id 更新一条记录（用于把后续分批上报的字段补进同一行）
+ */
+function updateById(id, data) {
+  if (!db || !id) return;
+  const stmt = db.prepare(`
+    UPDATE sensor_data SET
+      spO2 = @spO2, heart_rate = @heart_rate, density = @density,
+      temperature = @temperature, humidity = @humidity,
+      longitude = @longitude, latitude = @latitude,
+      fall_flag = @fall_flag, collision_flag = @collision_flag
+    WHERE id = @id
+  `);
+  stmt.run({ ...data, id });
+}
+
+/**
  * 获取最新 N 条记录
  */
 function getLatest(limit = 50) {
@@ -119,4 +135,4 @@ function close() {
   }
 }
 
-module.exports = { init, insert, getLatest, getRecent, getByTimeRange, getStats, close, _getDb: () => db };
+module.exports = { init, insert, updateById, getLatest, getRecent, getByTimeRange, getStats, close, _getDb: () => db };

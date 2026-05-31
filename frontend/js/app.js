@@ -6,6 +6,9 @@
 (function () {
   'use strict';
 
+  // 固定定位：黑龙江科技大学（松北校区）
+  const FIXED_LOCATION = { name: '黑龙江科技大学', lat: 45.8300, lng: 126.5500 };
+
   // ── State ──
   const state = {
     connected: false,
@@ -17,7 +20,16 @@
       longitude: 113.2644, latitude: 23.1291,
       fall_flag: 0, collision_flag: 0
     },
-    dataSources: new Map()
+    dataSources: new Map(),
+    // 图表状态：多指标合并图，记录每个指标是否显示
+    chartMetrics: {
+      spO2:        { label: '血氧', color: '--color-spo2', visible: true },
+      heart_rate:  { label: '心率', color: '--color-heart', visible: true },
+      density:     { label: '浓度', color: '--color-gas', visible: true },
+      temperature: { label: '温度', color: '--color-temp', visible: true },
+      humidity:    { label: '湿度', color: '--color-humi', visible: true }
+    },
+    historyData: []
   };
 
   const ws = new WSClient();
@@ -84,7 +96,11 @@
     historyBody: $('historyBody'),
     historyCount: $('historyCount'),
     btnRefreshHistory: $('btnRefreshHistory'),
-    historyRange: $('historyRange')
+    historyRange: $('historyRange'),
+    // Chart
+    chartLegend: $('chartLegend'),
+    historyChart: $('historyChart'),
+    chartEmpty: $('chartEmpty')
   };
 
   // ── Init ──
@@ -107,6 +123,52 @@
     // History
     dom.btnRefreshHistory.addEventListener('click', loadHistory);
     dom.historyRange.addEventListener('change', loadHistory);
+
+    // Chart 图例点击：切换该指标曲线显隐
+    dom.chartLegend.addEventListener('click', (e) => {
+      const item = e.target.closest('.chart-legend-item');
+      if (!item) return;
+      const metric = item.dataset.metric;
+      const m = state.chartMetrics[metric];
+      if (!m) return;
+      m.visible = !m.visible;
+      item.classList.toggle('active', m.visible);
+      drawChart();
+    });
+    // 初始化图例圆点颜色
+    dom.chartLegend.querySelectorAll('.chart-legend-item').forEach(item => {
+      const c = getComputedStyle(document.documentElement).getPropertyValue(item.dataset.color).trim();
+      const dot = item.querySelector('.legend-dot');
+      if (dot) dot.style.setProperty('--dot-color', c);
+    });
+
+    // 设备控制开关（LED / 风扇）
+    document.querySelectorAll('.ctrl-switch').forEach(sw => {
+      sw.addEventListener('click', () => {
+        if (!state.connected) {
+          addLog('sys', '未连接到服务器，无法发送控制命令');
+          return;
+        }
+        const target = sw.dataset.target;
+        const wasOn = sw.getAttribute('aria-checked') === 'true';
+        const nextOn = !wasOn;
+
+        const ok = ws.send({
+          type: 'control',
+          action: 'toggle',
+          target,
+          value: nextOn ? 'on' : 'off'
+        });
+        if (!ok) return;
+
+        sw.setAttribute('aria-checked', String(nextOn));
+        const card = sw.closest('.control-card');
+        const stateEl = document.getElementById('state_' + target);
+        if (card) card.classList.toggle('is-on', nextOn);
+        if (stateEl) stateEl.textContent = nextOn ? '已开启' : '已关闭';
+        addLog('out', `控制 ${target} = ${nextOn ? '开' : '关'}`);
+      });
+    });
 
     // WS events
     ws.on('connected', onConnected);
@@ -207,6 +269,11 @@
     if (c) {
       dom.infoClientId.textContent = ws.clientId || '—';
     }
+
+    // 控制按钮：未连接时禁用 + 提示
+    document.querySelectorAll('.ctrl-switch').forEach(b => b.disabled = !c);
+    const hint = document.getElementById('controlHint');
+    if (hint) hint.textContent = c ? '已就绪' : '未连接';
   }
 
   // ── Data Handlers ──
@@ -228,6 +295,8 @@
   }
 
   function renderHistory(data) {
+    state.historyData = data || [];
+    drawChart();
     const tbody = dom.historyBody;
     if (!data || data.length === 0) {
       tbody.innerHTML = '<tr class="history-empty"><td colspan="8"><span>暂无历史数据</span></td></tr>';
@@ -244,10 +313,7 @@
       const dens = r.density !== null ? r.density.toFixed(1) : '<span class="num-null">—</span>';
       const temp = r.temperature !== null ? `${r.temperature}°` : '<span class="num-null">—</span>';
       const humi = r.humidity !== null ? `${r.humidity}%` : '<span class="num-null">—</span>';
-      let loc = '<span class="num-null">—</span>';
-      if (r.longitude !== null && r.latitude !== null) {
-        loc = `${r.latitude.toFixed(2)}, ${r.longitude.toFixed(2)}`;
-      }
+      const loc = `${FIXED_LOCATION.lat.toFixed(2)}, ${FIXED_LOCATION.lng.toFixed(2)}`;
       const hasAlarm = r.fall_flag || r.collision_flag;
       const status = hasAlarm
         ? '<span class="badge-alert">告警</span>'
@@ -266,10 +332,104 @@
     }).join('');
   }
 
-  let _histTimer; // 历史刷新防抖
+  // ── 历史趋势折线图（纯 SVG，多指标合并，各自归一化）──
+  function drawChart() {
+    const svg = dom.historyChart;
+    // 历史接口按 id DESC 返回（最新在前），画图要按时间正序
+    const rows = [...state.historyData].reverse();
+
+    // 视图坐标系（viewBox 固定，preserveAspectRatio=none 拉伸填满）
+    const W = 600, H = 220;
+    const padL = 12, padR = 12, padT = 14, padB = 26;
+    const plotW = W - padL - padR;
+    const plotH = H - padT - padB;
+
+    // 收集每个可见指标的有效数据点
+    const series = [];
+    let timeLabels = null;
+    Object.keys(state.chartMetrics).forEach(metric => {
+      const m = state.chartMetrics[metric];
+      if (!m.visible) return;
+      const pts = rows
+        .map(r => ({ v: r[metric], t: r.created_at }))
+        .filter(p => p.v !== null && p.v !== undefined && !isNaN(p.v));
+      if (pts.length < 2) return;
+      const vals = pts.map(p => Number(p.v));
+      let min = Math.min(...vals), max = Math.max(...vals);
+      if (min === max) { min -= 1; max += 1; } // 平直线兜底
+      const color = getComputedStyle(document.documentElement)
+        .getPropertyValue(m.color).trim() || '#007aff';
+      series.push({ metric, label: m.label, color, pts, vals, min, max });
+      if (!timeLabels || pts.length > timeLabels.length) {
+        timeLabels = pts.map(p => p.t);
+      }
+    });
+
+    if (series.length === 0) {
+      svg.innerHTML = '';
+      dom.chartEmpty.classList.remove('hidden');
+      return;
+    }
+    dom.chartEmpty.classList.add('hidden');
+
+    drawChartSvg(svg, series, timeLabels, { W, H, padL, padR, padT, padB, plotW, plotH });
+  }
+
+  // 生成多曲线 SVG 内容（每条曲线按自身 min~max 归一化到画布高度）
+  function drawChartSvg(svg, series, timeLabels, g) {
+    svg.setAttribute('viewBox', `0 0 ${g.W} ${g.H}`);
+    let svgStr = '';
+
+    // 横向网格线（4 等分，仅作参考，不标数值——因多曲线量纲不同）
+    const ticks = 4;
+    for (let i = 0; i <= ticks; i++) {
+      const yy = g.padT + g.plotH - (g.plotH * i) / ticks;
+      svgStr += `<line x1="${g.padL}" y1="${yy.toFixed(1)}" x2="${g.W - g.padR}" y2="${yy.toFixed(1)}" stroke="#ececed" stroke-width="1"/>`;
+    }
+
+    // 每条曲线：归一化 + 折线 + 端点
+    series.forEach(s => {
+      const n = s.pts.length;
+      const top = s.max + (s.max - s.min) * 0.08;
+      const bot = s.min - (s.max - s.min) * 0.08;
+      const x = i => g.padL + (g.plotW * i) / (n - 1);
+      const y = v => g.padT + g.plotH - (g.plotH * (v - bot)) / (top - bot);
+
+      const line = s.pts.map((p, i) => `${x(i).toFixed(1)},${y(Number(p.v)).toFixed(1)}`).join(' ');
+      svgStr += `<polyline points="${line}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+
+      // 端点（点少时全标，点多只标末点）
+      const showDots = n <= 20;
+      s.pts.forEach((p, i) => {
+        if (showDots || i === n - 1) {
+          svgStr += `<circle cx="${x(i).toFixed(1)}" cy="${y(Number(p.v)).toFixed(1)}" r="2.2" fill="#fff" stroke="${s.color}" stroke-width="1.5"/>`;
+        }
+      });
+
+      // 末点数值标签（显示真实值，避免归一化看不出数值）
+      const lastV = Number(s.pts[n - 1].v);
+      const lx = x(n - 1), ly = y(lastV);
+      svgStr += `<text x="${(lx - 4).toFixed(1)}" y="${(ly - 5).toFixed(1)}" font-size="9" fill="${s.color}" text-anchor="end">${lastV % 1 === 0 ? lastV : lastV.toFixed(1)}</text>`;
+    });
+
+    // X 轴首尾时间标签
+    const fmt = t => (t && t.length > 16 ? t.slice(5, 16) : (t || ''));
+    if (timeLabels && timeLabels.length) {
+      svgStr += `<text x="${g.padL}" y="${g.H - 7}" font-size="10" fill="#aeaeb2" text-anchor="start">${fmt(timeLabels[0])}</text>`;
+      svgStr += `<text x="${g.W - g.padR}" y="${g.H - 7}" font-size="10" fill="#aeaeb2" text-anchor="end">${fmt(timeLabels[timeLabels.length - 1])}</text>`;
+    }
+
+    svg.innerHTML = svgStr;
+  }
+
+  let _histTimer; // 历史刷新节流：收到数据后最多每 2 秒刷新一次图表（保证会刷，不会被无限重置）
   function onEspData(msg) {
-    clearTimeout(_histTimer);
-    _histTimer = setTimeout(loadHistory, 2000);
+    if (!_histTimer) {
+      _histTimer = setTimeout(() => {
+        _histTimer = null;
+        loadHistory();
+      }, 2000);
+    }
     const data = msg.data;
     state.dataCount++;
     dom.infoDataCount.textContent = state.dataCount;
@@ -363,19 +523,14 @@
     setBar('bar_humidity', d.humidity, 100);
     setCardStatus('status_humidity', d.humidity, v => `${v}%`);
 
-    // ── Location ──
+    // ── Location（固定为黑龙江科技大学）──
     const locEl = dom.val_location.querySelector('.num');
-    if (d.longitude !== null && d.latitude !== null) {
-      const txt = `${d.latitude.toFixed(4)}°N ${d.longitude.toFixed(4)}°E`;
-      if (locEl && locEl.textContent !== txt) {
-        locEl.textContent = txt;
-        flash(locEl);
-      }
-      setCardStatus('status_location', true, () => '定位成功');
-    } else {
-      if (locEl) locEl.textContent = '—';
-      setCardStatus('status_location', null, () => '等待数据');
+    const txt = `${FIXED_LOCATION.lat.toFixed(4)}°N ${FIXED_LOCATION.lng.toFixed(4)}°E`;
+    if (locEl && locEl.textContent !== txt) {
+      locEl.textContent = txt;
+      flash(locEl);
     }
+    setCardStatus('status_location', true, () => FIXED_LOCATION.name);
 
     // ── Alarms ──
     updateAlarm('alarm_fall', 'badge_fall', d.fall_flag, '跌倒');

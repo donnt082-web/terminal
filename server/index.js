@@ -1,12 +1,11 @@
 const WebSocket = require('ws');
 const http = require('http');
 const net = require('net');
-const { Aedes } = require('aedes');
+const Aedes = require('aedes').Aedes;
 const db = require('./db');
 
 const DEFAULT_PORT = 3000;
 const port = parseInt(process.argv[2], 10) || process.env.PORT || DEFAULT_PORT;
-const MQTT_PORT = parseInt(process.env.MQTT_PORT, 10) || 1883;
 
 // HTTP server for health check, REST API & static files
 const httpServer = http.createServer((req, res) => {
@@ -166,6 +165,18 @@ wss.on('connection', (ws) => {
 
     // ── Forward browser messages to other browsers ──
     if (client.type === 'browser') {
+      // 处理控制命令（风扇/LED）
+      if (parsed.type === 'control') {
+        log(`🎮 控制命令 [${id}]: ${JSON.stringify(parsed)}`);
+        const cmd = JSON.stringify({ cmd: parsed.action, target: parsed.target, value: parsed.value });
+        if (aedes) aedes.publish({ topic: 'device/control', payload: cmd, qos: 0, retain: false }, () => {});
+
+        // 通过 TCP 透传给 STM32（开 = 1 高电平，关 = 0 低电平）
+        const v = (parsed.value === 'on' || parsed.value === 1) ? 1 : 0;
+        if (parsed.target === 'led' || parsed.target === 'fan') {
+          tcpBroadcastCmd({ [parsed.target]: v });
+        }
+      }
       broadcast({
         type: 'message',
         from: id,
@@ -192,63 +203,12 @@ wss.on('connection', (ws) => {
   });
 });
 
-// ── MQTT Broker (ESP-01S 真机数据入口) ───────────────────────
-// 使用 aedes 内置一个轻量 MQTT broker，监听 1883 端口。
-// 安全帽 ESP-01S 通过 AT 指令以 MQTT 协议连接本地服务器并发布数据，
-// broker 收到后解析、存库，并通过 WebSocket 实时推送给浏览器前端。
-// 注意：aedes v1 必须用 createBroker() 异步创建，new Aedes() 不会正确初始化。
-let mqttBroker = null;
-let mqttServer = null;
-
-async function startMqttBroker() {
-  mqttBroker = await Aedes.createBroker();
-  mqttServer = net.createServer(mqttBroker.handle);
-
-  mqttBroker.on('client', (client) => {
-    log(`📶 MQTT 设备连接 [${client.id}]`);
-  });
-
-  mqttBroker.on('clientDisconnect', (client) => {
-    log(`📴 MQTT 设备断开 [${client.id}]`);
-  });
-
-  mqttBroker.on('publish', (packet, client) => {
-    // 忽略 broker 自身的系统消息（$SYS/...）和无客户端来源的消息
-    if (!client || !packet.topic || packet.topic.startsWith('$SYS')) return;
-
-    const payload = packet.payload ? packet.payload.toString() : '';
-    log(`📡 MQTT 数据 [${client.id}] ${packet.topic}: ${payload.slice(0, 200)}`);
-
-    let parsed;
-    try {
-      parsed = JSON.parse(payload);
-    } catch {
-      parsed = { raw: payload };
-    }
-
-    const sourceId = 'mqtt_' + client.id;
-
-    // 转发给所有浏览器客户端（与 WebSocket 数据源走同一通道，前端无需区分）
-    broadcast({
-      type: 'espData',
-      from: sourceId,
-      data: parsed,
-      timestamp: new Date().toISOString()
-    }, null, ['browser', 'unknown']);
-
-    // 持久化到数据库（复用与 WebSocket 数据相同的解析逻辑）
-    persistEspData(sourceId, parsed);
-  });
-
-  await new Promise((resolve) => {
-    mqttServer.listen(MQTT_PORT, () => {
-      log(`MQTT Broker 已启动，监听端口 ${MQTT_PORT}`);
-      resolve();
-    });
-  });
-}
-
 // ── Database Persistence ──────────────────────────────────────
+
+// 每个设备的最新合并状态：因固件分两次上报（report1=血氧/心率/浓度/告警，
+// report2=温湿度/经纬度），用此缓存把多次上报累积成一条完整记录再存库。
+const latestState = new Map();
+const MERGE_WINDOW_MS = 8000; // 合并窗口：8 秒内的上报视为同一组
 
 function persistEspData(clientId, parsed) {
   try {
@@ -268,8 +228,8 @@ function persistEspData(clientId, parsed) {
 
     if (!props) return;
 
-    const record = {
-      client_id: clientId,
+    // 本次上报解析出的字段（缺失为 null）
+    const incoming = {
       spO2: props.spO2 ?? props.dis_spo2 ?? null,
       heart_rate: props.heart_rate ?? props.dis_hr ?? null,
       density: props.density ?? props.ppm ?? null,
@@ -277,16 +237,49 @@ function persistEspData(clientId, parsed) {
       humidity: props.humidity ?? null,
       longitude: props.longitude ?? null,
       latitude: props.latitude ?? null,
-      fall_flag: props.fall_flag ? 1 : 0,
-      collision_flag: props.collision_flag ? 1 : 0
+      fall_flag: props.fall_flag != null ? (props.fall_flag ? 1 : 0) : null,
+      collision_flag: props.collision_flag != null ? (props.collision_flag ? 1 : 0) : null
     };
 
-    // Only insert if there's at least one meaningful value
-    const hasData = record.spO2 !== null || record.heart_rate !== null || record.density !== null ||
-                    record.temperature !== null || record.humidity !== null ||
-                    record.longitude !== null || record.latitude !== null;
-    if (hasData) {
-      db.insert(record);
+    const now = Date.now();
+    let st = latestState.get(clientId);
+    // 超出合并窗口则重新开一组（避免把很久以前的数据并进来）
+    if (!st || now - st.ts > MERGE_WINDOW_MS) {
+      st = { ts: now, data: {}, rowId: null };
+      latestState.set(clientId, st);
+    }
+    st.ts = now;
+
+    // 用本次非空字段更新合并状态
+    let changed = false;
+    for (const k of Object.keys(incoming)) {
+      if (incoming[k] !== null && incoming[k] !== undefined) {
+        st.data[k] = incoming[k];
+        changed = true;
+      }
+    }
+    if (!changed) return;
+
+    // 合并后的完整记录（缺失字段补 null / 0）
+    const record = {
+      client_id: clientId,
+      spO2: st.data.spO2 ?? null,
+      heart_rate: st.data.heart_rate ?? null,
+      density: st.data.density ?? null,
+      temperature: st.data.temperature ?? null,
+      humidity: st.data.humidity ?? null,
+      longitude: st.data.longitude ?? null,
+      latitude: st.data.latitude ?? null,
+      fall_flag: st.data.fall_flag ?? 0,
+      collision_flag: st.data.collision_flag ?? 0
+    };
+
+    if (st.rowId == null) {
+      // 本组第一条上报：插入新行，记住行号
+      st.rowId = db.insert(record);
+    } else {
+      // 本组后续上报：更新同一行，把新字段补进去（合并成一条完整记录）
+      db.updateById(st.rowId, record);
     }
   } catch (err) {
     log(`数据库写入错误: ${err.message}`);
@@ -342,24 +335,136 @@ function log(msg) {
   console.log(`[${time}] ${msg}`);
 }
 
-// ── Start Server ─────────────────────────────────────────────
+// ── MQTT Broker (port 1883) ─────────────────────────
+// aedes v1 必须用 createBroker() 异步创建（new Aedes() 不会正确初始化，导致 connack 超时）
+const MQTT_PORT = 1883;
+let aedes = null;
+let mqttServer = null;
+
+async function startMqttBroker() {
+  aedes = await Aedes.createBroker();
+  mqttServer = net.createServer(aedes.handle);
+
+  aedes.on('client', (client) => {
+    log(`🔌 MQTT 客户端连接: ${client.id}`);
+  });
+
+  aedes.on('clientDisconnect', (client) => {
+    log(`❌ MQTT 客户端断开: ${client.id}`);
+  });
+
+  aedes.on('publish', (packet, client) => {
+    // 忽略系统主题和无客户端的消息
+    if (!client || packet.topic.startsWith('$SYS')) return;
+
+    const payload = packet.payload.toString();
+    log(`📡 MQTT [${client.id}] ${packet.topic}: ${payload.slice(0, 200)}`);
+
+    // 解析上报数据
+    try {
+      const parsed = JSON.parse(payload);
+
+      // 提取 properties（兼容 services 格式和扁平 JSON）
+      let data = parsed;
+      if (parsed.services && Array.isArray(parsed.services)) {
+        const s = parsed.services[0];
+        if (s && s.properties) data = s.properties;
+      }
+
+      broadcast({
+        type: 'espData',
+        from: client.id,
+        data: data,
+        timestamp: new Date().toISOString()
+      }, null, ['browser', 'unknown']);
+
+      persistEspData(client.id, data);
+    } catch (e) {
+      // 非 JSON 忽略
+    }
+  });
+
+  await new Promise((resolve) => {
+    mqttServer.listen(MQTT_PORT, () => {
+      log(`MQTT Broker 已启动，监听端口 ${MQTT_PORT}`);
+      resolve();
+    });
+  });
+}
+
+// ── Raw TCP Server (port 3001) — ESP01s 透传 JSON 入口 ─────────
+const TCP_PORT = 3001;
+const tcpClients = new Map();
+
+const tcpServer = net.createServer((sock) => {
+  const id = 'tcp_' + sock.remoteAddress + ':' + sock.remotePort;
+  tcpClients.set(id, sock);
+  log(`🔌 TCP 客户端连接: ${id}`);
+
+  let buf = '';
+  sock.on('data', (chunk) => {
+    buf += chunk.toString('utf8');
+    // 一行一条 JSON（STM32 端是 \n 结尾）
+    let nl;
+    while ((nl = buf.indexOf('\n')) !== -1) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line) continue;
+
+      log(`📡 TCP 数据 [${id}]: ${line.slice(0, 200)}`);
+
+      try {
+        const data = JSON.parse(line);
+        broadcast({
+          type: 'espData',
+          from: id,
+          data,
+          timestamp: new Date().toISOString()
+        }, null, ['browser', 'unknown']);
+        persistEspData(id, data);
+      } catch (e) {
+        log(`TCP JSON 解析失败: ${e.message}`);
+      }
+    }
+  });
+
+  sock.on('close', () => {
+    tcpClients.delete(id);
+    log(`❌ TCP 客户端断开: ${id}`);
+  });
+
+  sock.on('error', (e) => log(`TCP 错误 [${id}]: ${e.message}`));
+});
+
+// 工具：向所有 TCP 客户端发送一条命令（前端按钮 → 透传到 STM32）
+// 连发 3 次（间隔 60ms）提高可靠性，避开 STM32 USART3 偶发丢包
+function tcpBroadcastCmd(cmd) {
+  const line = JSON.stringify(cmd) + '\n';
+  for (const sock of tcpClients.values()) {
+    if (!sock.destroyed) sock.write(line);
+  }
+}
+
+// ── Start Servers ────────────────────────────────────────────
 httpServer.listen(port, () => {
-  console.log('');
-  console.log('╔═══════════════════════════════════════════════╗');
-  console.log('║       智能安全帽管理服务器                     ║');
-  console.log('╠═══════════════════════════════════════════════╣');
-  console.log(`║  WS 地址   : ws://localhost:${port}            `);
-  console.log(`║  API 接口  : http://localhost:${port}/api/*    `);
-  console.log(`║  MQTT 接入 : mqtt://<本机IP>:${MQTT_PORT}       `);
-  console.log('╚═══════════════════════════════════════════════╝');
-  console.log('');
+  tcpServer.listen(TCP_PORT, () => {
+    console.log('');
+    console.log('╔═══════════════════════════════════════════════╗');
+    console.log('║       智能安全帽管理服务器                     ║');
+    console.log('╠═══════════════════════════════════════════════╣');
+    console.log(`║  WS   端口 : ${port}`);
+    console.log(`║  MQTT 端口 : ${MQTT_PORT}`);
+    console.log(`║  TCP  端口 : ${TCP_PORT}  (ESP-01S 透传)`);
+    console.log(`║  API  接口 : http://localhost:${port}/api/*`);
+    console.log('╚═══════════════════════════════════════════════╝');
+    console.log('');
 
-  // 初始化数据库
-  db.init();
+    db.init();
 
-  // 启动 MQTT broker（异步）
-  startMqttBroker().catch((err) => {
-    log(`MQTT Broker 启动失败: ${err.message}`);
+    // 启动 MQTT broker（异步）
+    startMqttBroker().catch((err) => {
+      log(`MQTT Broker 启动失败: ${err.message}`);
+    });
   });
 });
 
@@ -368,8 +473,6 @@ function shutdown() {
   log('正在关闭服务器...');
   wss.clients.forEach(c => c.close());
   httpServer.close();
-  if (mqttServer) mqttServer.close();
-  if (mqttBroker) mqttBroker.close();
   db.close();
   process.exit(0);
 }
