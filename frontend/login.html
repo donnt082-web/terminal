@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>登录 - 智能安全帽系统终端</title>
+  <style>
+    :root {
+      --bg-page: #f5f5f7;
+      --bg-surface: #ffffff;
+      --bg-fill: #f0f0f2;
+      --text-primary: #1d1d1f;
+      --text-secondary: #86868b;
+      --text-tertiary: #aeaeb2;
+      --accent-blue: #007aff;
+      --accent-purple: #5856d6;
+      --accent-gradient: linear-gradient(135deg, #007aff, #5856d6);
+      --shadow-md: 0 4px 16px rgba(0,0,0,0.06), 0 2px 8px rgba(0,0,0,0.04);
+      --shadow-lg: 0 12px 40px rgba(0,0,0,0.08), 0 4px 16px rgba(0,0,0,0.04);
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+      --font: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
+    }
+
+    *, *::before, *::after {
+      margin: 0; padding: 0; box-sizing: border-box;
+    }
+
+    html {
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    body {
+      min-height: 100vh;
+      background: var(--bg-page);
+      font-family: var(--font);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    ::selection {
+      background: var(--accent-blue);
+      color: #fff;
+    }
+
+    .login-wrapper {
+      width: 100%;
+      max-width: 400px;
+      animation: fadeUp 0.6s cubic-bezier(0.4, 0, 0.2, 1) both;
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .login-card {
+      background: var(--bg-surface);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg);
+      padding: 40px 36px;
+    }
+
+    .login-logo {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 28px;
+    }
+
+    .login-logo svg {
+      filter: drop-shadow(0 4px 12px rgba(0,122,255,0.2));
+    }
+
+    .login-title {
+      text-align: center;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--text-primary);
+      margin-bottom: 6px;
+    }
+
+    .login-subtitle {
+      text-align: center;
+      font-size: 14px;
+      color: var(--text-secondary);
+      margin-bottom: 32px;
+    }
+
+    .form-field {
+      margin-bottom: 18px;
+    }
+
+    .form-field label {
+      display: block;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+      letter-spacing: 0.02em;
+    }
+
+    .form-field input {
+      width: 100%;
+      padding: 12px 16px;
+      background: var(--bg-fill);
+      border: 1.5px solid transparent;
+      border-radius: var(--radius-sm);
+      color: var(--text-primary);
+      font-size: 15px;
+      font-family: var(--font);
+      outline: none;
+      transition: all 0.25s ease;
+    }
+
+    .form-field input:focus {
+      border-color: var(--accent-blue);
+      background: var(--bg-surface);
+      box-shadow: 0 0 0 4px rgba(0,122,255,0.1);
+    }
+
+    .form-field input::placeholder {
+      color: var(--text-tertiary);
+    }
+
+    .login-btn {
+      width: 100%;
+      padding: 13px 24px;
+      background: var(--accent-gradient);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius-sm);
+      font-size: 15px;
+      font-weight: 600;
+      font-family: var(--font);
+      cursor: pointer;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+      overflow: hidden;
+      margin-top: 8px;
+    }
+
+    .login-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(0,122,255,0.35);
+    }
+
+    .login-btn:active {
+      transform: translateY(0);
+      box-shadow: 0 2px 8px rgba(0,122,255,0.25);
+    }
+
+    .login-error {
+      text-align: center;
+      font-size: 13px;
+      color: #ff3b30;
+      margin-top: 14px;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    .login-error.visible {
+      opacity: 1;
+    }
+
+    .login-footer {
+      text-align: center;
+      margin-top: 24px;
+      font-size: 12px;
+      color: var(--text-tertiary);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="login-wrapper">
+    <div class="login-card">
+      <div class="login-logo">
+        <svg width="52" height="52" viewBox="0 0 28 28" fill="none">
+          <rect width="28" height="28" rx="8" fill="url(#logo-grad)"/>
+          <path d="M8 18V10l6 4-6 4zm8-8v8l6-4-6-4z" fill="#fff"/>
+          <defs>
+            <linearGradient id="logo-grad" x1="0" y1="0" x2="28" y2="28">
+              <stop stop-color="#007AFF"/><stop offset="1" stop-color="#5856D6"/>
+            </linearGradient>
+          </defs>
+        </svg>
+      </div>
+      <h1 class="login-title">智能安全帽系统终端</h1>
+      <p class="login-subtitle">请登录以继续</p>
+
+      <form id="loginForm" autocomplete="on">
+        <div class="form-field">
+          <label for="username">用户名</label>
+          <input type="text" id="username" name="username" value="admin" placeholder="请输入用户名" autocomplete="username" spellcheck="false">
+        </div>
+        <div class="form-field">
+          <label for="password">密码</label>
+          <input type="password" id="password" name="password" value="123456789" placeholder="请输入密码" autocomplete="current-password">
+        </div>
+        <button type="submit" class="login-btn">登录</button>
+        <p class="login-error" id="loginError">用户名或密码错误</p>
+      </form>
+    </div>
+    <p class="login-footer">Smart Helmet Terminal System</p>
+  </div>
+
+  <script>
+    (function() {
+      'use strict';
+
+      const VALID_USER = 'admin';
+      const VALID_PASS = '123456789';
+
+      const form = document.getElementById('loginForm');
+      const errorEl = document.getElementById('loginError');
+
+      form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const user = document.getElementById('username').value.trim();
+        const pass = document.getElementById('password').value;
+
+        if (user === VALID_USER && pass === VALID_PASS) {
+          sessionStorage.setItem('terminal_logged_in', '1');
+          window.location.href = 'index.html';
+        } else {
+          errorEl.classList.add('visible');
+          setTimeout(() => errorEl.classList.remove('visible'), 2500);
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

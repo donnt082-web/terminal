@@ -1,0 +1,16 @@
+{
+  "name": "smart-terminal-server",
+  "version": "1.0.0",
+  "description": "智能终端管理系统 - WebSocket 服务器",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "aedes": "^1.0.2",
+    "better-sqlite3": "^12.9.0",
+    "mqtt": "^5.15.1",
+    "ws": "^8.16.0"
+  }
+}

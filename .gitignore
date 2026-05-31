@@ -1,0 +1,22 @@
+# ---- Node.js 依赖（用 npm install 重建，不上传）----
+node_modules/
+server/node_modules/
+
+# ---- 运行时数据 / 日志（本地生成，不上传）----
+*.log
+server/data/*.db
+server/data/*.db-journal
+server/data/*.db-wal
+server/data/*.db-shm
+
+# ---- 编辑器 / 工具本地配置 ----
+.claude/
+*.local.json
+
+# ---- 环境变量 / 密钥 ----
+.env
+.env.*
+
+# ---- 系统垃圾文件 ----
+Thumbs.db
+.DS_Store
