@@ -11,7 +11,6 @@ http.createServer((req, res) => {
 
   if (url.pathname === '/api/data') {
     const limit = Math.min(parseInt(url.searchParams.get('limit') || '500', 10), 50000);
-    // 按 client_id + created_at（精确到秒）分组合并，让两条互补的 JSON 拼成一行
     const rows = db.prepare(`
       SELECT
         MAX(id) AS id,
@@ -42,7 +41,7 @@ http.createServer((req, res) => {
 <html lang="zh">
 <head>
 <meta charset="utf-8">
-<title>智能头盔 - 数据库表</title>
+<title>智能安全帽 - 数据库表</title>
 <style>
   * { box-sizing: border-box; }
   body { font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; margin: 0; padding: 16px; background: #f5f5f7; }
@@ -60,12 +59,14 @@ http.createServer((req, res) => {
   th.desc::after { content: ' ▼'; color: #007aff; }
   td.text, th.text { text-align: left; }
   tr:hover td { background: #f9f9fb; }
-  .fall-yes, .crash-yes { background: #ffebeb; font-weight: bold; color: #d70015; }
+  .alert-row { background: #ffebeb; font-weight: bold; color: #d70015; }
+  .badge-ok { color: #34c759; }
+  .badge-warn { color: #ff3b30; font-weight: bold; }
   .container { max-height: calc(100vh - 100px); overflow: auto; border-radius: 8px; }
 </style>
 </head>
 <body>
-<h2>📊 智能头盔传感器数据 (sensor_data)</h2>
+<h2>智能安全帽传感器数据 (sensor_data)</h2>
 <div class="toolbar">
   <label>显示条数 <select id="limit">
     <option value="100">100</option>
@@ -90,8 +91,7 @@ http.createServer((req, res) => {
     <th data-key="humidity">湿度</th>
     <th data-key="longitude">经度</th>
     <th data-key="latitude">纬度</th>
-    <th data-key="fall_flag">跌倒</th>
-    <th data-key="collision_flag">撞击</th>
+    <th data-key="has_alert">状态</th>
   </tr></thead>
   <tbody id="tbody"></tbody>
 </table></div>
@@ -129,22 +129,25 @@ function render() {
   });
 
   const tb = document.getElementById('tbody');
-  tb.innerHTML = view.map(r => \`
-    <tr>
-      <td class="text">\${r.id}</td>
-      <td class="text">\${r.created_at}</td>
-      <td class="text">\${r.client_id ?? '-'}</td>
-      <td>\${r.spO2 ?? '-'}</td>
-      <td>\${r.heart_rate ?? '-'}</td>
-      <td>\${r.density != null ? r.density.toFixed(2) : '-'}</td>
-      <td>\${r.temperature ?? '-'}</td>
-      <td>\${r.humidity ?? '-'}</td>
-      <td>\${r.longitude != null ? r.longitude.toFixed(4) : '-'}</td>
-      <td>\${r.latitude != null ? r.latitude.toFixed(4) : '-'}</td>
-      <td class="\${r.fall_flag ? 'fall-yes' : ''}">\${r.fall_flag ? '⚠ 是' : '0'}</td>
-      <td class="\${r.collision_flag ? 'crash-yes' : ''}">\${r.collision_flag ? '💥 是' : '0'}</td>
-    </tr>
-  \`).join('');
+  tb.innerHTML = view.map(r => {
+    const hasAlert = r.fall_flag || r.collision_flag;
+    const statusHtml = hasAlert
+      ? '<span class="badge-warn">⚠ 警告</span>'
+      : '<span class="badge-ok">正常</span>';
+    return '<tr' + (hasAlert ? ' class="alert-row"' : '') + '>' +
+      '<td class="text">' + r.id + '</td>' +
+      '<td class="text">' + r.created_at + '</td>' +
+      '<td class="text">admin</td>' +
+      '<td>' + (r.spO2 ?? '-') + '</td>' +
+      '<td>' + (r.heart_rate ?? '-') + '</td>' +
+      '<td>' + (r.density != null ? r.density.toFixed(2) : '-') + '</td>' +
+      '<td>' + (r.temperature ?? '-') + '</td>' +
+      '<td>' + (r.humidity ?? '-') + '</td>' +
+      '<td>' + (r.longitude != null ? r.longitude.toFixed(4) : '-') + '</td>' +
+      '<td>' + (r.latitude != null ? r.latitude.toFixed(4) : '-') + '</td>' +
+      '<td>' + statusHtml + '</td>' +
+      '</tr>';
+  }).join('');
 }
 
 document.querySelectorAll('th').forEach(th => {
@@ -163,5 +166,5 @@ load();
 </body>
 </html>`);
 }).listen(PORT, () => {
-  console.log(`📊 数据库表格视图已启动: http://localhost:${PORT}`);
+  console.log('📊 数据库表格视图已启动: http://localhost:' + PORT);
 });

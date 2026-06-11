@@ -1,6 +1,8 @@
 const WebSocket = require('ws');
 const http = require('http');
 const net = require('net');
+const fs = require('fs');
+const path = require('path');
 const Aedes = require('aedes').Aedes;
 const db = require('./db');
 
@@ -20,10 +22,40 @@ const httpServer = http.createServer((req, res) => {
   }
 
   const parsed = new URL(req.url, `http://${req.headers.host}`);
-  const path = parsed.pathname;
+  const urlPath = parsed.pathname;
+
+  // ── Static Files (frontend) ──
+  const FRONTEND_DIR = path.join(__dirname, '..', 'frontend');
+  const MIME = {
+    '.html': 'text/html; charset=utf-8',
+    '.css':  'text/css; charset=utf-8',
+    '.js':   'application/javascript; charset=utf-8',
+    '.svg':  'image/svg+xml',
+    '.png':  'image/png',
+    '.ico':  'image/x-icon'
+  };
+
+  let filePath = urlPath === '/' ? '/index.html' : urlPath;
+  // 只允许访问 frontend 内的文件，防止目录穿越
+  const safePath = path.normalize(filePath).replace(/^(\.\.[\/\\])+/, '');
+  const fullPath = path.join(FRONTEND_DIR, safePath);
+
+  if (
+    safePath.startsWith('/') === false &&
+    fullPath.startsWith(FRONTEND_DIR) &&
+    fs.existsSync(fullPath) &&
+    fs.statSync(fullPath).isFile()
+  ) {
+    const ext = path.extname(fullPath).toLowerCase();
+    const mime = MIME[ext] || 'application/octet-stream';
+    const content = fs.readFileSync(fullPath);
+    res.writeHead(200, { 'Content-Type': mime });
+    res.end(content);
+    return;
+  }
 
   // ── Health ──
-  if (path === '/health') {
+  if (urlPath === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       status: 'ok',
@@ -35,7 +67,7 @@ const httpServer = http.createServer((req, res) => {
   }
 
   // ── WS Client Stats ──
-  if (path === '/stats') {
+  if (urlPath === '/stats') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     const list = [...clients.values()].map(c => ({
       id: c.id, type: c.type,
@@ -46,14 +78,14 @@ const httpServer = http.createServer((req, res) => {
   }
 
   // ── DB Stats ──
-  if (path === '/api/stats') {
+  if (urlPath === '/api/stats') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(db.getStats()));
     return;
   }
 
   // ── Latest Records ──
-  if (path === '/api/data') {
+  if (urlPath === '/api/data') {
     const limit = Math.min(parseInt(parsed.searchParams.get('limit'), 10) || 50, 500);
     const data = db.getLatest(limit);
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -62,7 +94,7 @@ const httpServer = http.createServer((req, res) => {
   }
 
   // ── Most Recent Record ──
-  if (path === '/api/data/recent') {
+  if (urlPath === '/api/data/recent') {
     const record = db.getRecent();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ data: record }));
@@ -70,7 +102,7 @@ const httpServer = http.createServer((req, res) => {
   }
 
   // ── Time Range Query ──
-  if (path === '/api/data/range') {
+  if (urlPath === '/api/data/range') {
     const start = parsed.searchParams.get('start') || '1970-01-01';
     const end = parsed.searchParams.get('end') || '2099-12-31';
     const limit = Math.min(parseInt(parsed.searchParams.get('limit'), 10) || 200, 1000);
@@ -243,8 +275,15 @@ function persistEspData(clientId, parsed) {
 
     const now = Date.now();
     let st = latestState.get(clientId);
-    // 超出合并窗口则重新开一组（避免把很久以前的数据并进来）
-    if (!st || now - st.ts > MERGE_WINDOW_MS) {
+
+    // 新一轮条件：当前行已有完整数据（健康+环境），且新健康数据到达
+    const isHealthMsg = incoming.spO2 != null || incoming.heart_rate != null;
+    const isEnvMsg    = incoming.temperature != null || incoming.humidity != null;
+    const curComplete  = st && st.data.spO2 != null && (st.data.temperature != null || st.data.humidity != null);
+    const newCycle     = isHealthMsg && curComplete;
+
+    // 超出合并窗口 或 新一轮 → 开新行
+    if (!st || now - st.ts > MERGE_WINDOW_MS || newCycle) {
       st = { ts: now, data: {}, rowId: null };
       latestState.set(clientId, st);
     }

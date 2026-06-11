@@ -3,10 +3,32 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>智能终端管理系统</title>
+  <title>智能安全帽终端</title>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
+
+  <!-- ═══ Login Overlay ═══ -->
+  <div class="login-overlay" id="loginOverlay">
+    <div class="login-card">
+      <div class="login-logo">
+        <svg width="36" height="36" viewBox="0 0 28 28" fill="none">
+          <rect width="28" height="28" rx="8" fill="url(#lg-grad)"/>
+          <path d="M8 18V10l6 4-6 4zm8-8v8l6-4-6-4z" fill="#fff"/>
+          <defs><linearGradient id="lg-grad" x1="0" y1="0" x2="28" y2="28"><stop stop-color="#007AFF"/><stop offset="1" stop-color="#5856D6"/></linearGradient></defs>
+        </svg>
+        <h2>智能安全帽终端</h2>
+        <p>请输入账号密码登录</p>
+      </div>
+      <form id="loginForm" autocomplete="on">
+        <div class="login-field"><label>👤</label><input type="text" id="loginUser" placeholder="用户名" autocomplete="username"></div>
+        <div class="login-field"><label>🔒</label><input type="password" id="loginPass" placeholder="密码" autocomplete="current-password"></div>
+        <label class="login-remember"><input type="checkbox" id="chkRemember" checked><span class="checkmark"></span>记住密码，下次自动登录</label>
+        <button type="submit" id="btnLogin">登 录</button>
+        <p class="login-error" id="loginError"></p>
+      </form>
+    </div>
+  </div>
 
   <!-- ═══ Navigation Bar ═══ -->
   <nav class="nav">
@@ -21,13 +43,14 @@
             </linearGradient>
           </defs>
         </svg>
-        <span class="nav-title">智能终端</span>
+        <span class="nav-title">智能安全帽</span>
       </div>
       <div class="nav-meta" id="navMeta">
         <span class="nav-badge" id="navClientId">等待连接</span>
       </div>
     </div>
     <div class="nav-right">
+      <span class="nav-user" id="navUser">admin</span>
       <div class="status-badge" id="statusBadge">
         <span class="status-dot" id="statusDot"></span>
         <span class="status-label" id="statusLabel">未连接</span>
@@ -207,7 +230,7 @@
       <!-- ─── Alarm Section ─── -->
       <div class="alarm-section" id="alarmSection">
         <div class="alarm-header">
-          <h3 class="section-title">告警状态</h3>
+          <h3 class="section-title">警告状态</h3>
           <span class="alarm-summary" id="alarmSummary">一切正常</span>
         </div>
         <div class="alarm-row">
@@ -355,5 +378,41 @@
 
   <script src="js/websocket.js"></script>
   <script src="js/app.js"></script>
+  <script>
+  // ── Login (不干扰 app.js 初始化) ──
+  (function(){
+    var U='admin', P='123456789', KEY='terminal_auth';
+    var ov=document.getElementById('loginOverlay');
+    var fm=document.getElementById('loginForm');
+    if(!ov||!fm)return;
+    // 设置导航栏用户名
+    function setNavUser(name){
+      var el=document.getElementById('navUser');if(el)el.textContent=name;
+    }
+    // 自动登录
+    try{
+      var raw=localStorage.getItem(KEY);
+      if(raw){
+        var s=JSON.parse(raw);
+        if(s.u===U&&s.p===P){var u=document.getElementById('loginUser');var p=document.getElementById('loginPass');if(u)u.value=s.u;if(p)p.value=s.p;setNavUser(s.u);ov.classList.add('hidden');return;}
+      }
+    }catch(e){}
+    // 手动登录
+    fm.addEventListener('submit',function(e){
+      e.preventDefault();
+      var u=document.getElementById('loginUser');
+      var p=document.getElementById('loginPass');
+      var err=document.getElementById('loginError');
+      if(!u||!p)return;
+      if(u.value!==U||p.value!==P){if(err)err.textContent='用户名或密码错误';return;}
+      if(err)err.textContent='';
+      setNavUser(u.value);
+      if(document.getElementById('chkRemember').checked){
+        try{localStorage.setItem(KEY,JSON.stringify({u:u.value,p:p.value}));}catch(e){}
+      }
+      ov.classList.add('hidden');
+    });
+  })();
+  </script>
 </body>
 </html>

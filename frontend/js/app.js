@@ -1,5 +1,5 @@
 /**
- * 智能终端管理系统 - 主应用逻辑
+ * 智能安全帽终端 - 主应用逻辑
  * Apple 设计语言 · 细腻动效 · 丰富内容
  * (业务核心未改动：WS连接管理、数据解析、转发渲染)
  */
@@ -316,7 +316,7 @@
       const loc = `${FIXED_LOCATION.lat.toFixed(2)}, ${FIXED_LOCATION.lng.toFixed(2)}`;
       const hasAlarm = r.fall_flag || r.collision_flag;
       const status = hasAlarm
-        ? '<span class="badge-alert">告警</span>'
+        ? '<span class="badge-alert">警告</span>'
         : '<span class="badge-ok">正常</span>';
 
       return `<tr>
